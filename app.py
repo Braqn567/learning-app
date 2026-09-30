@@ -24,14 +24,48 @@ if файл is not None:
     if st.button("✨ Направи тест"):
         with st.spinner("AI чете материала и прави въпроси..."):
             try:
-                # session_state е "паметта" на страницата, за да не изчезне тестът
-                st.session_state["test"] = make_test(файл.getvalue(), файл.type)
+                test = make_test(файл.getvalue(), файл.type)
+                # Изтриваме отговорите от стария тест, за да започнем начисто
+                for key in list(st.session_state.keys()):
+                    if key.startswith("answer_"):
+                        del st.session_state[key]
+                st.session_state["test"] = test
             except Exception as e:
                 st.error(f"Нещо се обърка: {e}")
 
-# Показваме въпросите (засега само за проверка, че AI работи)
+# Показваме теста за решаване
 if "test" in st.session_state:
-    for i, q in enumerate(st.session_state["test"], 1):
-        st.write(f"**{i}. {q.question}**  _(тема: {q.topic})_")
-        for option in q.options:
-            st.write(f"- {option}")
+    test = st.session_state["test"]
+
+    if not test:
+        st.warning("От този материал не се получи тест. Опитай с друг.")
+    else:
+        st.header("📝 Тестът")
+
+        # Във form отговорите се изпращат всички наведнъж, когато натиснеш бутона
+        with st.form("quiz"):
+            for i, q in enumerate(test):
+                st.radio(
+                    f"{i + 1}. {q.question}",
+                    options=list(range(len(q.options))),
+                    format_func=lambda j, q=q: q.options[j],
+                    index=None,  # нищо не е избрано предварително
+                    key=f"answer_{i}",
+                )
+            submitted = st.form_submit_button("✅ Провери отговорите")
+
+        if submitted:
+            correct_count = 0
+            for i, q in enumerate(test):
+                chosen = st.session_state.get(f"answer_{i}")
+                right_text = q.options[q.correct_index]
+
+                if chosen == q.correct_index:
+                    correct_count += 1
+                    st.success(f"{i + 1}. Верно! {q.explanation}")
+                elif chosen is None:
+                    st.warning(f"{i + 1}. Няма отговор. Верният е: {right_text}. {q.explanation}")
+                else:
+                    st.error(f"{i + 1}. Грешно. Верният е: {right_text}. {q.explanation}")
+
+            st.subheader(f"Резултат: {correct_count} от {len(test)}")
