@@ -21,10 +21,12 @@ if файл is not None:
     else:
         st.success("Документът е получен.")
 
+    брой = st.slider("Колко въпроса да има в теста?", 5, 15, 10)
+
     if st.button("✨ Направи тест"):
         with st.spinner("AI чете материала и прави въпроси..."):
             try:
-                test = make_test(файл.getvalue(), файл.type)
+                test = make_test(файл.getvalue(), файл.type, брой)
                 # Изтриваме отговорите от стария тест, за да започнем начисто
                 for key in list(st.session_state.keys()):
                     if key.startswith("answer_"):
@@ -42,30 +44,62 @@ if "test" in st.session_state:
     else:
         st.header("📝 Тестът")
 
-        # Във form отговорите се изпращат всички наведнъж, когато натиснеш бутона
         with st.form("quiz"):
             for i, q in enumerate(test):
                 st.radio(
                     f"{i + 1}. {q.question}",
                     options=list(range(len(q.options))),
                     format_func=lambda j, q=q: q.options[j],
-                    index=None,  # нищо не е избрано предварително
+                    index=None,
                     key=f"answer_{i}",
                 )
             submitted = st.form_submit_button("✅ Провери отговорите")
 
         if submitted:
             correct_count = 0
+            topic_stats = {}  # за всяка тема пазим [колко са верни, колко са общо]
+
             for i, q in enumerate(test):
                 chosen = st.session_state.get(f"answer_{i}")
                 right_text = q.options[q.correct_index]
 
+                # Записваме въпроса към неговата тема
+                topic = q.topic.strip().capitalize()
+                stats = topic_stats.setdefault(topic, [0, 0])
+                stats[1] += 1
+
                 if chosen == q.correct_index:
                     correct_count += 1
+                    stats[0] += 1
                     st.success(f"{i + 1}. Верно! {q.explanation}")
                 elif chosen is None:
                     st.warning(f"{i + 1}. Няма отговор. Верният е: {right_text}. {q.explanation}")
                 else:
                     st.error(f"{i + 1}. Грешно. Верният е: {right_text}. {q.explanation}")
 
-            st.subheader(f"Резултат: {correct_count} от {len(test)}")
+            # Общ процент
+            st.divider()
+            st.header("📊 Резултат")
+            percent = round(correct_count / len(test) * 100)
+            st.metric("Успеваемост", f"{percent}%")
+            st.write(f"{correct_count} от {len(test)} верни отговора")
+            st.progress(percent / 100)
+
+            # Процент по теми
+            st.subheader("По теми")
+            weak_topics = []
+            for topic, (ok, total) in topic_stats.items():
+                topic_percent = round(ok / total * 100)
+                st.write(f"**{topic}**: {topic_percent}% ({ok} от {total})")
+                st.progress(topic_percent / 100)
+                if topic_percent < 70:  # под 70% считаме темата за слаба
+                    weak_topics.append((topic_percent, topic))
+
+            # На какво да наблегнеш
+            st.subheader("🎯 На какво да наблегнеш")
+            if weak_topics:
+                weak_topics.sort()  # най-слабите теми първи
+                for topic_percent, topic in weak_topics:
+                    st.write(f"- **{topic}** ({topic_percent}%)")
+            else:
+                st.success("Браво! Всички теми са над 70%. Можеш да качиш нов материал.")
