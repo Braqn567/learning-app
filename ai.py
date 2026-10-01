@@ -19,21 +19,39 @@ LEVELS = {
 
 # Така изглежда един въпрос. AI е длъжен да върне точно тази форма.
 class Question(BaseModel):
-    topic: str          # кратка тема на въпроса
-    question: str       # текстът на въпроса
-    options: list[str]  # 4 възможни отговора
-    correct_index: int  # кой е верният: 0, 1, 2 или 3
-    explanation: str    # кратко обяснение защо е верен
+    topic: str                 # кратка тема на въпроса
+    question: str              # текстът на въпроса
+    options: list[str]         # възможните отговори
+    correct_indices: list[int] # индексите (от 0) на ВСИЧКИ верни отговори
+    explanation: str           # кратко обяснение защо са верни
 
 
-def make_test(data: bytes, mime_type: str, count: int = 5, difficulty: str = "Среден") -> list[Question]:
+def make_test(
+    data: bytes,
+    mime_type: str,
+    count: int = 5,
+    difficulty: str = "Среден",
+    multi: bool = False,
+) -> list[Question]:
     client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+    if multi:
+        answers_rule = (
+            "Всеки въпрос има точно 5 възможни отговора, а верните са от 1 до 4 "
+            "(различен брой за различните въпроси). В correct_indices изброй "
+            "индексите на ВСИЧКИ верни отговори, като броенето започва от 0. "
+        )
+    else:
+        answers_rule = (
+            "Всеки въпрос има точно 4 възможни отговора и само един верен. "
+            "В correct_indices сложи само индекса му, като броенето започва от 0. "
+        )
 
     prompt = (
         f"Ти си учител. Направи тест с {count} въпроса върху приложения материал. "
         "Използвай САМО информацията от материала, без външни знания. "
         f"{LEVELS[difficulty]} "
-        "Всеки въпрос има точно 4 възможни отговора и само един верен. "
+        f"{answers_rule}"
         "Групирай въпросите в 3-5 общи теми и за всеки въпрос посочи темата му (1-3 думи). "
         "Една и съща тема винаги се пише с едно и също име. За всеки въпрос дай и кратко обяснение. "
         "Пиши на езика на материала. "
@@ -54,4 +72,13 @@ def make_test(data: bytes, mime_type: str, count: int = 5, difficulty: str = "С
             response_schema=list[Question],
         ),
     )
-    return response.parsed
+
+    # Проверка: махаме невалидни индекси и въпроси без верен отговор,
+    # за да не се счупи приложението, ако AI сгреши
+    questions = response.parsed or []
+    cleaned = []
+    for q in questions:
+        q.correct_indices = sorted({j for j in q.correct_indices if 0 <= j < len(q.options)})
+        if q.correct_indices:
+            cleaned.append(q)
+    return cleaned
