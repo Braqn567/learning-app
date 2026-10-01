@@ -1,5 +1,6 @@
 import streamlit as st
 from ai import make_test
+st.set_page_config(page_title="Помощник за учене", page_icon="📚")
 
 st.title("📚 Помощник за учене")
 st.write("Качи документ или снимка от учебния си материал и ще получиш тест.")
@@ -27,13 +28,15 @@ if файл is not None:
         with st.spinner("AI чете материала и прави въпроси..."):
             try:
                 test = make_test(файл.getvalue(), файл.type, брой)
-                # Изтриваме отговорите от стария тест, за да започнем начисто
                 for key in list(st.session_state.keys()):
                     if key.startswith("answer_"):
                         del st.session_state[key]
                 st.session_state["test"] = test
             except Exception as e:
-                st.error(f"Нещо се обърка: {e}")
+                if "429" in str(e):
+                    st.error("Достигнат е лимитът на безплатните заявки. Изчакай 1-2 минути и опитай пак.")
+                else:
+                    st.error(f"Нещо се обърка: {e}")
 
 # Показваме теста за решаване
 if "test" in st.session_state:
@@ -57,7 +60,7 @@ if "test" in st.session_state:
 
         if submitted:
             correct_count = 0
-            topic_stats = {}  # за всяка тема пазим [колко са верни, колко са общо]
+            topic_stats = {}
 
             for i, q in enumerate(test):
                 chosen = st.session_state.get(f"answer_{i}")
@@ -92,7 +95,7 @@ if "test" in st.session_state:
                 topic_percent = round(ok / total * 100)
                 st.write(f"**{topic}**: {topic_percent}% ({ok} от {total})")
                 st.progress(topic_percent / 100)
-                if topic_percent < 70:  # под 70% считаме темата за слаба
+                if topic_percent < 70:
                     weak_topics.append((topic_percent, topic))
 
             # На какво да наблегнеш
