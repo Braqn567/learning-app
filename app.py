@@ -1,9 +1,11 @@
+import re
 from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
 
 from ai import make_test
+from database import count_results, create_user, init_db, save_result, verify_user
 from ui import apply_style, fmt, show_result
 
 ICON_PATH = Path(__file__).resolve().parent / "assets" / "icon.png"
@@ -14,6 +16,7 @@ st.set_page_config(
     layout="wide",
 )
 apply_style()
+init_db()  # създава базата и таблиците, ако ги няма
 
 # Начини за даване на точки
 RULE_STRICT = "Като на изпит: всичко или нищо"
@@ -154,9 +157,9 @@ def page_new_test():
             started_at = st.session_state.get("started_at", finished_at)
 
             total_points = 0.0  # колко точки е спечелил
-            total_max = 0.0  # колко точки е можел да спечели
-            topic_stats = {}  # за всяка тема: [спечелени точки, възможни точки]
-            feedback = []  # съобщенията за всеки въпрос
+            total_max = 0.0     # колко точки е можел да спечели
+            topic_stats = {}    # за всяка тема: [спечелени точки, възможни точки]
+            feedback = []       # съобщенията за всеки въпрос
 
             for i, q in enumerate(test):
                 correct = set(q.correct_indices)
@@ -190,22 +193,18 @@ def page_new_test():
                 chosen_text = "; ".join(q.options[j] for j in sorted(selected))
 
                 if not selected:
-                    feedback.append(("warning",
-                                     f"{i + 1}. Няма отговор (0 от {fmt(max_points)} т.). Верни: {correct_text}. {q.explanation}"))
+                    feedback.append(("warning", f"{i + 1}. Няма отговор (0 от {fmt(max_points)} т.). Верни: {correct_text}. {q.explanation}"))
                 elif points == max_points:
-                    feedback.append(("success",
-                                     f"{i + 1}. Напълно вярно! ({fmt(max_points)} от {fmt(max_points)} т.) {q.explanation}"))
+                    feedback.append(("success", f"{i + 1}. Напълно вярно! ({fmt(max_points)} от {fmt(max_points)} т.) {q.explanation}"))
                 elif points > 0:
-                    feedback.append(("info",
-                                     f"{i + 1}. Частично ({fmt(points)} от {fmt(max_points)} т.). Ти избра: {chosen_text}. Верни: {correct_text}. {q.explanation}"))
+                    feedback.append(("info", f"{i + 1}. Частично ({fmt(points)} от {fmt(max_points)} т.). Ти избра: {chosen_text}. Верни: {correct_text}. {q.explanation}"))
                 else:
-                    feedback.append(("error",
-                                     f"{i + 1}. Грешно (0 от {fmt(max_points)} т.). Ти избра: {chosen_text}. Верни: {correct_text}. {q.explanation}"))
+                    feedback.append(("error", f"{i + 1}. Грешно (0 от {fmt(max_points)} т.). Ти избра: {chosen_text}. Верни: {correct_text}. {q.explanation}"))
 
             percent = round(total_points / total_max * 100)
 
-            # Всичко за един решен тест е в един речник. Това ще ни трябва и за историята.
-            st.session_state["result"] = {
+            # Всичко за един решен тест е в един речник
+            result = {
                 "percent": percent,
                 "points": total_points,
                 "max_points": total_max,
@@ -217,11 +216,72 @@ def page_new_test():
                 "duration_sec": int((finished_at - started_at).total_seconds()),
                 "date": finished_at.strftime("%d.%m.%Y %H:%M"),
             }
+            st.session_state["result"] = result
+
+            # Ако е влязъл в профила си, запазваме резултата в базата
+            user = st.session_state.get("user")
+            if user:
+                save_result(user["id"], result)
+                st.toast("Резултатът е запазен в профила ти ✅")
+
             if percent >= 90:
                 st.balloons()
 
         if "result" in st.session_state:
             show_result(st.session_state["result"])
+            if not st.session_state.get("user"):
+                st.info("👤 Влез в профила си (меню → Профил), за да се запазват резултатите ти.")
+
+
+def page_profile():
+    st.header("👤 Профил")
+    user = st.session_state.get("user")
+
+    # Ако вече е влязъл - показваме профила
+    if user:
+        with st.container(border=True):
+            st.markdown(f"### Здравей, {user['username']}! 👋")
+            st.write(f"Запазени тестове: **{count_results(user['id'])}**")
+            if st.button("Изход"):
+                for key in ("user", "test", "result", "settings"):
+                    st.session_state.pop(key, None)
+                st.rerun()
+        return
+
+    # Иначе - вход или регистрация
+    tab_login, tab_register = st.tabs(["🔑 Вход", "📝 Регистрация"])
+
+    with tab_login:
+        with st.form("login_form"):
+            username = st.text_input("Потребителско име")
+            password = st.text_input("Парола", type="password")
+            login_clicked = st.form_submit_button("Влез", type="primary")
+        if login_clicked:
+            found = verify_user(username, password)
+            if found:
+                st.session_state["user"] = found
+                st.rerun()
+            else:
+                st.error("Грешно потребителско име или парола.")
+
+    with tab_register:
+        with st.form("register_form"):
+            new_name = st.text_input("Избери потребителско име")
+            new_pass = st.text_input("Парола (поне 8 символа)", type="password")
+            new_pass2 = st.text_input("Повтори паролата", type="password")
+            register_clicked = st.form_submit_button("Създай профил", type="primary")
+        if register_clicked:
+            if not re.fullmatch(r"\w{3,30}", new_name.strip()):
+                st.error("Името е от 3 до 30 символа: букви, цифри или _ (без интервали).")
+            elif len(new_pass) < 8:
+                st.error("Паролата трябва да е поне 8 символа.")
+            elif new_pass != new_pass2:
+                st.error("Двете пароли не съвпадат.")
+            elif create_user(new_name, new_pass):
+                st.session_state["user"] = verify_user(new_name, new_pass)
+                st.rerun()
+            else:
+                st.error("Това име вече е заето. Избери друго.")
 
 
 # ---------- Меню отляво ----------
@@ -235,12 +295,17 @@ with st.sidebar:
         ["🆕 Нов тест", "📜 История", "👤 Профил"],
         label_visibility="collapsed",
     )
+    st.divider()
+    current_user = st.session_state.get("user")
+    if current_user:
+        st.caption(f"Влязъл като **{current_user['username']}**")
+    else:
+        st.caption("Не си влязъл (гост)")
 
 if страница == "🆕 Нов тест":
     page_new_test()
 elif страница == "📜 История":
     st.header("📜 История")
-    st.info("Идва в следващите стъпки: ще виждаш всичките си решени тестове.")
+    st.info("Идва в следващата стъпка: ще виждаш всичките си решени тестове.")
 else:
-    st.header("👤 Профил")
-    st.info("Идва в следващите стъпки: регистрация и вход.")
+    page_profile()
