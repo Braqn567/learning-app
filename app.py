@@ -2,11 +2,12 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 from ai import make_test
-from database import count_results, create_user, init_db, save_result, verify_user
-from ui import apply_style, fmt, show_result
+from database import count_results, create_user, init_db, list_results, save_result, verify_user
+from ui import apply_style, fmt, grade_for, show_result
 
 ICON_PATH = Path(__file__).resolve().parent / "assets" / "icon.png"
 
@@ -233,6 +234,69 @@ def page_new_test():
                 st.info("👤 Влез в профила си (меню → Профил), за да се запазват резултатите ти.")
 
 
+def page_history():
+    st.header("📜 История")
+    user = st.session_state.get("user")
+
+    if not user:
+        st.info("👤 Влез в профила си (меню → Профил), за да виждаш историята на тестовете си.")
+        return
+
+    results = list_results(user["id"])  # най-новите първи
+    if not results:
+        st.info("Още нямаш запазени тестове. Реши един в „Нов тест“ и той ще се появи тук.")
+        return
+
+    percents = [r["percent"] for r in results]
+
+    # ----- Обобщение -----
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Тестове", len(results))
+    c2.metric("Средна успеваемост", f"{round(sum(percents) / len(percents))}%")
+    c3.metric("Най-добър резултат", f"{max(percents)}%")
+
+    # ----- Графика на прогреса (от най-стария към най-новия) -----
+    if len(results) >= 2:
+        st.subheader("📈 Прогрес")
+        oldest_first = list(reversed(percents))
+        chart_data = pd.DataFrame(
+            {
+                "Тест №": list(range(1, len(oldest_first) + 1)),
+                "Успеваемост %": oldest_first,
+            }
+        ).set_index("Тест №")
+        st.line_chart(chart_data)
+
+    # ----- Най-слаби теми от всички тестове -----
+    topic_totals = {}  # за всяка тема: [точки, възможни точки]
+    for r in results:
+        for topic, (pts, mx) in r["data"]["topics"].items():
+            totals = topic_totals.setdefault(topic, [0.0, 0.0])
+            totals[0] += pts
+            totals[1] += mx
+    ranked = sorted(
+        (round(pts / mx * 100), topic)
+        for topic, (pts, mx) in topic_totals.items()
+        if mx > 0
+    )
+    st.subheader("🎯 Най-слаби теми досега")
+    for pct, topic in ranked[:5]:
+        st.write(f"- **{topic}** ({pct}%)")
+
+    # ----- Списък с тестовете -----
+    st.subheader("🗂️ Твоите тестове")
+    labels = [
+        f"{r['data'].get('date', r['created_at'])} · {r['percent']}% · {grade_for(r['percent'])[0]}"
+        for r in results
+    ]
+    choice = st.selectbox(
+        "Избери тест, за да го видиш",
+        list(range(len(results))),
+        format_func=lambda i: labels[i],
+    )
+    show_result(results[choice]["data"])
+
+
 def page_profile():
     st.header("👤 Профил")
     user = st.session_state.get("user")
@@ -305,7 +369,6 @@ with st.sidebar:
 if страница == "🆕 Нов тест":
     page_new_test()
 elif страница == "📜 История":
-    st.header("📜 История")
-    st.info("Идва в следващата стъпка: ще виждаш всичките си решени тестове.")
+    page_history()
 else:
     page_profile()

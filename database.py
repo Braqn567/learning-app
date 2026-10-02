@@ -112,3 +112,21 @@ def count_results(user_id):
             "SELECT COUNT(*) AS n FROM results WHERE user_id = ?", (user_id,)
         ).fetchone()
     return row["n"]
+
+
+def list_results(user_id):
+    """Всички тестове на потребителя, най-новите първи."""
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            "SELECT id, created_at, percent, data FROM results WHERE user_id = ? ORDER BY id DESC",
+            (user_id,),
+        ).fetchall()
+    return [
+        {
+            "id": row["id"],
+            "created_at": row["created_at"],
+            "percent": row["percent"],
+            "data": json.loads(row["data"]),  # връщаме текста обратно в речник
+        }
+        for row in rows
+    ]
